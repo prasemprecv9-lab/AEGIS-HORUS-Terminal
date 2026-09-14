@@ -92,5 +92,5 @@ app.post('/api/change-password', requireAuth, (req, res) => {
 });
 
 app.use(express.static(__dirname, {extensions: ['html']}));
-app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.use((_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.listen(PORT, '0.0.0.0', () => console.log(`AEGIS // HORUS online on ${PORT}`));
