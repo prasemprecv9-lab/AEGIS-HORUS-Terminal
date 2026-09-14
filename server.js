@@ -1,5 +1,5 @@
 const express = require('express');
-const session = require('express-session');
+const cookieSession = require('cookie-session');
 const Database = require('better-sqlite3');
 const path = require('path');
 const crypto = require('crypto');
@@ -7,6 +7,11 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const db = new Database(process.env.DB_PATH || path.join(__dirname, 'aegis.db'));
+
+if (!process.env.SESSION_SECRET) {
+  console.warn('WARNING: SESSION_SECRET is not configured. Set a stable secret in Railway for persistent sessions.');
+}
+const sessionSecret = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 
 db.exec(`CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,11 +24,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS users (
 
 app.use(express.json({limit: '1mb'}));
 app.use(express.urlencoded({extended: true, limit: '1mb'}));
-app.use(session({
-  secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
-  resave: false,
-  saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 1000 * 60 * 60 * 24 * 7 }
+app.use(cookieSession({
+  name: 'aegis_session',
+  keys: [sessionSecret],
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: process.env.NODE_ENV === 'production',
+  maxAge: 1000 * 60 * 60 * 24 * 7
 }));
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
@@ -39,7 +46,7 @@ function publicUser(user) {
   return { id: user.id, username: user.username, displayName: user.display_name, role: user.role, createdAt: user.created_at };
 }
 function requireAuth(req, res, next) {
-  if (!req.session.userId) return res.status(401).json({error: 'AUTH_REQUIRED'});
+  if (!req.session || !req.session.userId) return res.status(401).json({error: 'AUTH_REQUIRED'});
   next();
 }
 
@@ -52,7 +59,7 @@ app.post('/api/register', (req, res) => {
   if (password.length < 8) return res.status(400).json({error: 'WEAK_PASSWORD'});
   try {
     const info = db.prepare('INSERT INTO users (username,password_hash,display_name) VALUES (?,?,?)').run(username, hashPassword(password), displayName || username);
-    req.session.userId = info.lastInsertRowid;
+    req.session = { userId: Number(info.lastInsertRowid) };
     const user = db.prepare('SELECT * FROM users WHERE id=?').get(info.lastInsertRowid);
     res.json({user: publicUser(user)});
   } catch (e) {
@@ -65,10 +72,10 @@ app.post('/api/login', (req, res) => {
   const password = String(req.body.password || '');
   const user = db.prepare('SELECT * FROM users WHERE username=?').get(username);
   if (!user || !verifyPassword(password, user.password_hash)) return res.status(401).json({error: 'INVALID_CREDENTIALS'});
-  req.session.userId = user.id;
+  req.session = { userId: user.id };
   res.json({user: publicUser(user)});
 });
-app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ok: true})));
+app.post('/api/logout', (req, res) => { req.session = null; res.json({ok: true}); });
 app.get('/api/me', requireAuth, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.session.userId);
   if (!user) return res.status(401).json({error: 'AUTH_REQUIRED'});
