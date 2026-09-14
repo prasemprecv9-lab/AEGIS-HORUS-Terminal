@@ -1,1 +1,1 @@
-Trigger Railway to deploy the current main branch.
+Railway deployment trigger v2. Deploy the current main branch of the HORUS terminal.
